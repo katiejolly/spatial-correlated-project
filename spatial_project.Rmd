@@ -1,0 +1,74 @@
+---
+title: "Spatial Paper"
+author: "Katie Jolly"
+date: "4/25/2019"
+output: html_document
+---
+
+```{r}
+library(tidycensus)
+```
+
+```{r}
+total_population <- get_acs(geography = "tract", state = "MN", county = "Ramsey", geometry = TRUE, variables = "B00002_001")
+
+race <- get_acs(geography = "tract", state = "MN", county = "Ramsey", geometry = TRUE, table = "B02001")
+
+median_income <- get_acs(geography = "tract", state = "MN", county = "Ramsey", geometry = TRUE, variables = "B06011_001")
+
+vehicle_ownership <- get_acs(geography = "tract", state = "MN", county = "Ramsey", geometry = TRUE, variables = "B08015_001")
+```
+
+```{r}
+load("~/correlated_data/Areal_data_police_sf.RData")
+```
+
+```{r}
+Dat_sf <- Dat_sf %>%
+  mutate_all(~replace(., is.na(.), 0))
+
+Dat_sp <- as(Dat_sf, "Spatial")
+nb <- poly2nb(Dat_sp)
+w <- nb2listw(nb, style = "B")
+
+local_i <- localmoran(Dat_sf$CitationProp, listw = w, zero.policy=NULL, na.action=na.fail, 
+	alternative = "greater", p.adjust.method="none", mlvar=TRUE,
+        spChk=NULL)
+
+Dat_sf <- Dat_sf %>%
+  mutate(local_citeprop = local_i[,1],
+         pval_citeprop = local_i[,5],
+         local_signif = ifelse(pval_citeprop >= 0.05, 0, 1))
+
+ggplot(Dat_sf, aes(fill = local_signif)) +
+  geom_sf() +
+  theme_minimal() +
+  theme(panel.grid.major = element_line("transparent"))
+```
+
+```{r}
+Dat_sf <- st_transform(Dat_sf, 26915)
+total_population <- st_transform(total_population, 26915)
+
+pop_join <- st_join(total_population, Dat_sf) %>%
+  filter(!is.na(gridnum))
+
+ggplot(pop_join, aes(fill = factor(gridnum))) +
+  geom_sf() +
+  theme_minimal() +
+  theme(panel.grid.major = element_line("transparent"),
+        legend.position = "none") 
+```
+
+```{r}
+pop_join <- pop_join %>%
+  mutate(intersect_area = st_area(.))
+
+total_population <- total_population %>%
+  mutate(tract_area = st_area(.))
+
+pop_join <- pop_join %>%
+  left_join(total_population %>% st_set_geometry(NULL) %>% select(GEOID, tract_area)) %>%
+  mutate(area_ratio = intersect_area / tract_area)
+```
+
